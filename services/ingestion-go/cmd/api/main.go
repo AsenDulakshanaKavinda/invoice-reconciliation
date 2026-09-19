@@ -1,25 +1,32 @@
 package main
 
 import (
-	"fmt"
+	"ingestion-go/config"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
+
+type Application struct {
+	Config *config.Config
+}
+
 func main() {
-	// Create a Gin router with default middleware (logger and recovery)
+	cfg := config.LoadConfig()
+	app := &Application{Config: cfg}
+
 	r := gin.Default()
 
-	// Define a simple GET endpoint
-	r.GET("/ping", func(c *gin.Context) {
-		// Return JSON response
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
+	r.GET("/info", app.handleInfo)
+	log.Printf("%s", "API is running on port: " + cfg.Port)
+	r.Run(":" + cfg.Port)
+}
 
-	// Start server on port 8080 (default)
-	fmt.Println("Server will listen on 0.0.0.0:8080") //(localhost:8080 on Windows)
-	r.Run()
+func (app *Application) handleInfo(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"environment": app.Config.Environment,
+		"status":      "running",
+	})
 }
