@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:17.10 
+    container_name: invoice_postgres
+    environment:
+      POSTGRES_DB: invoice_audit_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: invoice_rabbitmq
+    ports:
+      - "5672:5672"   # AMQP Protocol
+      - "15672:15672" # Management Dashboard
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    container_name: invoice_minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API Port
+      - "9001:9001"   # MinIO Web Console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: invoice_temporal
+    ports:
+      - "7233:7233"   # gRPC Server Port
+      - "8233:8233"   # Temporal Web UI Port
+    entrypoint: ["temporal", "server", "start-dev", "--ip", "0.0.0.0", "--ui-port", "8233"]
+    environment:
+      - DB=postgres
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=postgrespassword
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      - postgres

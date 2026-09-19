@@ -1,0 +1,11 @@
+[project]
+name = "processor-python"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "AsenDulakshnaKavinda", email = "s22010362@ousl.lk" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
