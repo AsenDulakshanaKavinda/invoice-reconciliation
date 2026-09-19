@@ -1,7 +1,7 @@
 package handlers
 
 import (
-
+	"errors"
 	"fmt"
 	"log"
 	"mock-uploader/config"
@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 )
@@ -126,6 +127,92 @@ func (s *Server) createUpload(c *gin.Context) {
 
 }
 
+
+// --- POST /api/uploads/:id/complete
+func (s *Server) completeUpload(c *gin.Context) {
+
+	// validate the id (it must ne a uuid)
+	// if invalid return error (400)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid upload id")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// check is there a invoice record with id 
+	// if it is read key and status
+	// if not there is not record return error (404)
+	// if found other type of error return (500) error
+	var key, status string
+	err = s.db.QueryRow(ctx,
+		`SELECT object_key, status FROM invoices WHERE id = $1`, id.String()).Scan(&key, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		fail(c, http.StatusNotFound, "upload not found")
+		return
+	}
+	if err != nil {
+		log.Printf("lookup failed: %v", err)
+		fail(c, http.StatusInternalServerError, "could not look up the upload")
+		return
+	}
+
+	// if status of the record is uploaded - 200
+	// if status of the record is pending - skip
+	// else - 409
+	switch status {
+	case "uploaded":
+		c.JSON(http.StatusOK, gin.H{"id": id.String(), "status": "uploaded"})
+		return
+	case "pending":
+		// continue below
+	default:
+		fail(c, http.StatusConflict, "this upload was rejected; start a new one")
+		return
+	}
+
+	// validate either record send to the s3 or not
+	// if not return error (409)
+	// if any other error (500)
+	info, err := s.minio.StatObject(ctx, s.cfg.MinioBucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			fail(c, http.StatusConflict, "the file has not reached storage yet")
+			return
+		}
+		log.Printf("stat failed for %s: %v", key, err)
+		fail(c, http.StatusInternalServerError, "could not verify the uploaded file")
+		return
+	}
+
+	// if record size > max upload size remove it
+	// if there is a error while removing to log the error
+	// and then remove it from the invoice record table
+	// and return error (413)
+	if info.Size > s.cfg.MaxUploadBytes {
+		if rmErr := s.minio.RemoveObject(ctx, s.cfg.MinioBucket, key, minio.RemoveObjectOptions{}); rmErr != nil {
+			log.Printf("remove oversized object %s failed: %v", key, rmErr)
+		}
+		_, _ = s.db.Exec(ctx, `UPDATE invoices SET status = 'failed' WHERE id = $1`, id.String())
+		fail(c, http.StatusRequestEntityTooLarge, "the uploaded file exceeds the size limit and was removed")
+		return
+	}
+
+	// set status -> uploaded and update time
+	// if error return error (500)
+	_, err = s.db.Exec(ctx,
+		`UPDATE invoices SET status = 'uploaded', size_bytes = $2, uploaded_at = now() WHERE id = $1`,
+		id.String(), info.Size)
+	if err != nil {
+		log.Printf("update failed: %v", err)
+		fail(c, http.StatusInternalServerError, "could not save the upload")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"id": id.String(), "status": "uploaded", "size_bytes": info.Size})
+
+}
 
 
 
