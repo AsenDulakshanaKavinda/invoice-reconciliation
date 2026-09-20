@@ -6,6 +6,7 @@ import (
 	"log"
 	"mock-uploader/config"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -215,6 +216,102 @@ func (s *Server) completeUpload(c *gin.Context) {
 }
 
 
+// GET /api/invoices
+type invoiceItem struct {
+	ID          string    `json:"id"`
+	Filename    string    `json:"filename"`
+	ContentType string    `json:"content_type"`
+	Status      string    `json:"status"`
+	SizeBytes   int64     `json:"size_bytes"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (s *Server) listInvoices(c *gin.Context) {
+
+	// get last 20 invoice record upload 
+	// if there is a error return (500)
+	rows, err := s.db.Query(c.Request.Context(),
+		`SELECT id::text, original_filename, content_type, status, COALESCE(size_bytes, 0), created_at
+		 FROM invoices
+		 ORDER BY created_at DESC
+		 LIMIT 20`)
+	if err != nil {
+		log.Printf("list failed: %v", err)
+		fail(c, http.StatusInternalServerError, "could not load invoices")
+		return
+	}
+	defer rows.Close()
+
+	// store insight of invoice items in a array
+	// if any error return (500) else return json obj (200, items)
+	items := []invoiceItem{}
+	for rows.Next() {
+		var it invoiceItem
+		if err := rows.Scan(&it.ID, &it.Filename, &it.ContentType, &it.Status, &it.SizeBytes, &it.CreatedAt); err != nil {
+			log.Printf("scan failed: %v", err)
+			fail(c, http.StatusInternalServerError, "could not load invoices")
+			return
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("rows failed: %v", err)
+		fail(c, http.StatusInternalServerError, "could not load invoices")
+		return
+	}
+	c.JSON(http.StatusOK, items)
+
+}
 
 
+// --- GET /api/invoices/:id/download
+func (s *Server) downloadInvoice(c *gin.Context) {
+	// parse and validate id
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "invalid invoice id")
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// fetch record, get key, filename and status of the item 
+	// if record not found return error (404)
+	// if the status is not uploaded return (409)
+	// for other errors return error (500)
+	var key, filename, status string
+	err = s.db.QueryRow(ctx,
+		`SELECT object_key, original_filename, status FROM invoices WHERE id = $1`,
+		id.String()).Scan(&key, &filename, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		fail(c, http.StatusNotFound, "invoice not found")
+		return
+	}
+	if err != nil {
+		log.Printf("lookup failed: %v", err)
+		fail(c, http.StatusInternalServerError, "could not look up the invoice")
+		return
+	}
+	if status != "uploaded" {
+		fail(c, http.StatusConflict, "this invoice has no stored file")
+		return
+	}
+
+	// creates a temporary link that lets the browser download a stored file
+	// if error return (500)
+	// else send json obj (200, download url)
+	params := url.Values{}
+	params.Set("response-content-disposition",
+		fmt.Sprintf(`attachment; filename="%s"`, sanitizeFilename(filename)))
+
+	link, err := s.minio.PresignedGetObject(ctx, s.cfg.MinioBucket, key, 5*time.Minute, params)
+	if err != nil {
+		log.Printf("presign get failed for %s: %v", key, err)
+		fail(c, http.StatusInternalServerError, "could not generate download URL")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"download_url": link.String()})
+	
+
+}	
 
