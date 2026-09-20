@@ -23,6 +23,8 @@ type Config struct {
 
 	PresignExpiry  time.Duration
 	MaxUploadBytes int64
+
+	Environment string
 }
 
 func LoadConfig() Config {
@@ -43,6 +45,8 @@ func LoadConfig() Config {
 
 		PresignExpiry:  getenvDuration("PRESIGN_EXPIRY", 15*time.Minute),
 		MaxUploadBytes: getenvInt64("MAX_UPLOAD_BYTES", 20<<20), // 20 MiB
+
+		Environment: getenv("ENV", "dev"),
 	}
 }
 

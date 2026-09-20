@@ -19,6 +19,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("PRESIGN_EXPIRY", "")
 	t.Setenv("MAX_UPLOAD_BYTES", "")
+	t.Setenv("ENV", "")
 
 	cfg := LoadConfig()
 

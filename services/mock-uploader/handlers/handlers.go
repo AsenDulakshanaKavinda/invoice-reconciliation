@@ -19,11 +19,10 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-
 type Server struct {
-	cfg config.Config
-	db *pgxpool.Pool
-	minio *minio.Client
+	Cfg   config.Config
+	DB    *pgxpool.Pool
+	Minio *minio.Client
 }
 
 var allowedContentTypes = map[string]bool{
@@ -59,11 +58,11 @@ type createUploadRequest struct {
 	Size        int64  `json:"size" binding:"required,gt=0"`
 }
 
-func (s *Server) createUpload(c *gin.Context) {
+func (s *Server) CreateUpload(c *gin.Context) {
 	var req createUploadRequest
 
 	// Deserialize - validate and return Error
-	// read the HTTP req body, parses the JSON data and 
+	// read the HTTP req body, parses the JSON data and
 	// assing it to struct and return error (400)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "filename, content_type and a non-zero size are required")
@@ -80,11 +79,11 @@ func (s *Server) createUpload(c *gin.Context) {
 
 	// validate file size
 	// if file size larger than max byte size return error (413)
-	if req.Size > s.cfg.MaxUploadBytes {
+	if req.Size > s.Cfg.MaxUploadBytes {
 		fail(
 			c,
 			http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("file is larger than the %d MB limit", s.cfg.MaxUploadBytes>>20),
+			fmt.Sprintf("file is larger than the %d MB limit", s.Cfg.MaxUploadBytes>>20),
 		)
 		return
 	}
@@ -99,7 +98,7 @@ func (s *Server) createUpload(c *gin.Context) {
 	// PresignExpiry (15 min). The secret key is only used to sign it and is never
 	// included in the URL. This is computed locally (the region is set on the
 	// client), so it makes no network call to MinIO.
-	presigned, err := s.minio.PresignedPutObject(ctx, s.cfg.MinioBucket, key, s.cfg.PresignExpiry)
+	presigned, err := s.Minio.PresignedPutObject(ctx, s.Cfg.MinioBucket, key, s.Cfg.PresignExpiry)
 	if err != nil {
 		log.Printf("presign failed for %s: %v", key, err)
 		fail(c, http.StatusInternalServerError, "could not generate upload URL")
@@ -107,7 +106,7 @@ func (s *Server) createUpload(c *gin.Context) {
 	}
 
 	// insert invoice file details into the table
-	_, err = s.db.Exec(ctx,
+	_, err = s.DB.Exec(ctx,
 		`INSERT INTO invoices (id, object_key, original_filename, content_type, declared_size)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		id.String(), key, req.Filename, req.ContentType, req.Size)
@@ -123,14 +122,13 @@ func (s *Server) createUpload(c *gin.Context) {
 		"object_key":         key,
 		"upload_url":         presigned.String(),
 		"content_type":       req.ContentType,
-		"expires_in_seconds": int(s.cfg.PresignExpiry.Seconds()),
+		"expires_in_seconds": int(s.Cfg.PresignExpiry.Seconds()),
 	})
 
 }
 
-
 // --- POST /api/uploads/:id/complete
-func (s *Server) completeUpload(c *gin.Context) {
+func (s *Server) CompleteUpload(c *gin.Context) {
 
 	// validate the id (it must ne a uuid)
 	// if invalid return error (400)
@@ -142,12 +140,12 @@ func (s *Server) completeUpload(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// check is there a invoice record with id 
+	// check is there a invoice record with id
 	// if it is read key and status
 	// if not there is not record return error (404)
 	// if found other type of error return (500) error
 	var key, status string
-	err = s.db.QueryRow(ctx,
+	err = s.DB.QueryRow(ctx,
 		`SELECT object_key, status FROM invoices WHERE id = $1`, id.String()).Scan(&key, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		fail(c, http.StatusNotFound, "upload not found")
@@ -176,7 +174,7 @@ func (s *Server) completeUpload(c *gin.Context) {
 	// validate either record send to the s3 or not
 	// if not return error (409)
 	// if any other error (500)
-	info, err := s.minio.StatObject(ctx, s.cfg.MinioBucket, key, minio.StatObjectOptions{})
+	info, err := s.Minio.StatObject(ctx, s.Cfg.MinioBucket, key, minio.StatObjectOptions{})
 	if err != nil {
 		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
 			fail(c, http.StatusConflict, "the file has not reached storage yet")
@@ -191,18 +189,18 @@ func (s *Server) completeUpload(c *gin.Context) {
 	// if there is a error while removing to log the error
 	// and then remove it from the invoice record table
 	// and return error (413)
-	if info.Size > s.cfg.MaxUploadBytes {
-		if rmErr := s.minio.RemoveObject(ctx, s.cfg.MinioBucket, key, minio.RemoveObjectOptions{}); rmErr != nil {
+	if info.Size > s.Cfg.MaxUploadBytes {
+		if rmErr := s.Minio.RemoveObject(ctx, s.Cfg.MinioBucket, key, minio.RemoveObjectOptions{}); rmErr != nil {
 			log.Printf("remove oversized object %s failed: %v", key, rmErr)
 		}
-		_, _ = s.db.Exec(ctx, `UPDATE invoices SET status = 'failed' WHERE id = $1`, id.String())
+		_, _ = s.DB.Exec(ctx, `UPDATE invoices SET status = 'failed' WHERE id = $1`, id.String())
 		fail(c, http.StatusRequestEntityTooLarge, "the uploaded file exceeds the size limit and was removed")
 		return
 	}
 
 	// set status -> uploaded and update time
 	// if error return error (500)
-	_, err = s.db.Exec(ctx,
+	_, err = s.DB.Exec(ctx,
 		`UPDATE invoices SET status = 'uploaded', size_bytes = $2, uploaded_at = now() WHERE id = $1`,
 		id.String(), info.Size)
 	if err != nil {
@@ -215,7 +213,6 @@ func (s *Server) completeUpload(c *gin.Context) {
 
 }
 
-
 // GET /api/invoices
 type invoiceItem struct {
 	ID          string    `json:"id"`
@@ -226,11 +223,11 @@ type invoiceItem struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-func (s *Server) listInvoices(c *gin.Context) {
+func (s *Server) ListInvoices(c *gin.Context) {
 
-	// get last 20 invoice record upload 
+	// get last 20 invoice record upload
 	// if there is a error return (500)
-	rows, err := s.db.Query(c.Request.Context(),
+	rows, err := s.DB.Query(c.Request.Context(),
 		`SELECT id::text, original_filename, content_type, status, COALESCE(size_bytes, 0), created_at
 		 FROM invoices
 		 ORDER BY created_at DESC
@@ -263,9 +260,8 @@ func (s *Server) listInvoices(c *gin.Context) {
 
 }
 
-
 // --- GET /api/invoices/:id/download
-func (s *Server) downloadInvoice(c *gin.Context) {
+func (s *Server) DownloadInvoice(c *gin.Context) {
 	// parse and validate id
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -275,12 +271,12 @@ func (s *Server) downloadInvoice(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// fetch record, get key, filename and status of the item 
+	// fetch record, get key, filename and status of the item
 	// if record not found return error (404)
 	// if the status is not uploaded return (409)
 	// for other errors return error (500)
 	var key, filename, status string
-	err = s.db.QueryRow(ctx,
+	err = s.DB.QueryRow(ctx,
 		`SELECT object_key, original_filename, status FROM invoices WHERE id = $1`,
 		id.String()).Scan(&key, &filename, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -304,14 +300,12 @@ func (s *Server) downloadInvoice(c *gin.Context) {
 	params.Set("response-content-disposition",
 		fmt.Sprintf(`attachment; filename="%s"`, sanitizeFilename(filename)))
 
-	link, err := s.minio.PresignedGetObject(ctx, s.cfg.MinioBucket, key, 5*time.Minute, params)
+	link, err := s.Minio.PresignedGetObject(ctx, s.Cfg.MinioBucket, key, 5*time.Minute, params)
 	if err != nil {
 		log.Printf("presign get failed for %s: %v", key, err)
 		fail(c, http.StatusInternalServerError, "could not generate download URL")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"download_url": link.String()})
-	
 
-}	
-
+}
