@@ -1,0 +1,33 @@
+name: Run Go Tests
+
+on:
+  push:
+    branches: [ "main", "dev-main", "ingestion-infrastructure-setup"]
+  pull_request:
+    branches: [ "main", "dev-main", "ingestion-infrastructure-setup"]
+
+jobs:
+  test:
+    name: Test Go Service
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/ingestion-go
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/ingestion-go/go.mod
+          cache: true
+          cache-dependency-path: services/ingestion-go/go.sum
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
