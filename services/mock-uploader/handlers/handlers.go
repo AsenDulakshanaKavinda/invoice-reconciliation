@@ -39,10 +39,18 @@ func sanitizeFilename(name string) string {
 	name = strings.Trim(name, "._")
 	if name == "" {
 		space := "missing_filename"
-		name = fmt.Sprintf("%s: %s", space, time.Now().Format(time.RFC3339))
+		name = fmt.Sprintf("%s_%s", space, time.Now().Format(time.RFC3339))
 	}
+
 	if len(name) > 120 {
-		name = name[len(name)-120:] // keep the extension
+		ext := path.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		if len(ext) < 120 {
+			base = base[:120-len(ext)]
+			name = base + ext
+		} else {
+			name = name[len(name)-120:]
+		}
 	}
 	return name
 }
@@ -73,7 +81,7 @@ func (s *Server) CreateUpload(c *gin.Context) {
 	// if file content type not in allowedContentTypes map
 	// return error (415)
 	if !allowedContentTypes[req.ContentType] {
-		fail(c, http.StatusUnsupportedMediaType, "only PDF, PNG and JPEG files are accepted")
+		fail(c, http.StatusUnsupportedMediaType, "only PDF files are accepted")
 		return
 	}
 

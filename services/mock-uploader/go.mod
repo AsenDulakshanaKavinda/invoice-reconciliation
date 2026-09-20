@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
