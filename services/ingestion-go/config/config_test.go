@@ -19,6 +19,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("PRESIGN_EXPIRY", "")
 	t.Setenv("MAX_UPLOAD_BYTES", "")
 	t.Setenv("ENV", "")
+	t.Setenv("RABBITMQ_URL", "")
 
 	cfg := LoadConfig()
 
@@ -76,6 +77,13 @@ func TestLoadConfig_Defaults(t *testing.T) {
 			"expected default DatabaseURL %s, got %s",
 			expectedDBURL,
 			cfg.DatabaseURL,
+		)
+	}
+
+	if cfg.RabbitMQURL != "amqp://guest:guest@localhost:5672/" {
+		t.Errorf(
+			"expected default RabbitMQURL amqp://guest:guest@localhost:5672/, got %s",
+			cfg.RabbitMQURL,
 		)
 	}
 
@@ -147,6 +155,13 @@ func TestLoadConfig_CustomEnvVars(t *testing.T) {
 			"expected DatabaseURL %s, got %s",
 			expectedDBURL,
 			cfg.DatabaseURL,
+		)
+	}
+
+	if cfg.RabbitMQURL != "amqp://guest:guest@localhost:5672/" {
+		t.Errorf(
+			"expected RabbitMQURL amqp://guest:guest@localhost:5672/, got %s",
+			cfg.RabbitMQURL,
 		)
 	}
 

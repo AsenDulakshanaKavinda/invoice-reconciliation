@@ -21,6 +21,8 @@ type Config struct {
 
 	DatabaseURL string
 
+	RabbitMQURL string
+
 	Environment string
 }
 
@@ -40,6 +42,8 @@ func LoadConfig() Config {
 		DatabaseURL: getenv("DATABASE_URL",
 			"postgres://postgres:postgrespassword@localhost:5432/invoice_audit_db?sslmode=disable"),
 
+
+		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 
 		Environment: getenv("ENV", "dev"),
 	}
