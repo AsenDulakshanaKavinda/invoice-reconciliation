@@ -2,6 +2,10 @@ package storage
 
 import (
 	"context"
+	"ingestion-go/pkg/models"
+	"ingestion-go/pkg/pdf"
+	"ingestion-go/pkg/publisher"
+
 	"log"
 	"net/url"
 
@@ -9,43 +13,22 @@ import (
 	"github.com/minio/minio-go/v7/pkg/notification"
 )
 
-// BucketNotificationInput defines the parameters for setting up a bucket notification listener.
-// It includes the bucket name, optional prefix and suffix filters, and the list of events to listen for.
-
-// BucketNotificationInfo represents the information extracted from a bucket notification event.
-type BucketNotificationInput struct {
-	BucketName string
-	Prefix     string
-	Suffix     string
-	Events     []string
-}
-
-// WatchChangesInStorage sets up a listener for changes in the specified MinIO/S3 bucket based on the provided notification input.
-type BucketNotificationInfo struct {
-	EventName  string
-	BucketName string
-	ObjectKey  string
-	ObjectSize int64
-	ETag       string
-	EventTime  string
-}
-
 // WatchChangesInStorage sets up a listener for changes in the specified MinIO/S3 bucket based on the provided notification input.
 // It returns a channel that emits notification.Info objects whenever a relevant event occurs in the bucket.
-func WatchChangesInStorage(ctx context.Context, mc *minio.Client, bn *BucketNotificationInput) <-chan notification.Info {
+func WatchChangesInStorage(ctx context.Context, mc *minio.Client, bn *models.BucketNotificationInput) <-chan notification.Info {
 	log.Printf("Listening for notifications on bucket: %s...", bn.BucketName)
 	return mc.ListenBucketNotification(ctx, bn.BucketName, bn.Prefix, bn.Suffix, bn.Events)
 
 }
 
-// HandleStorageNotifications listens for storage notifications and processes them using the provided handler function.
+// StreamNotificationsToRabbitMQ listens for storage notifications and processes them using the provided handler function.
 // It takes a context, a MinIO client, a BucketNotificationInput struct, and a handler function as parameters.
 // The handler function is called with a BucketNotificationInfo struct for each relevant event received.
-func HandleStorageNotifications(
+func StreamNotificationsToRabbitMQ(
 	ctx context.Context,
 	mc *minio.Client,
-	input *BucketNotificationInput,
-	handler func(info BucketNotificationInfo),
+	input *models.BucketNotificationInput,
+	publisher *publisher.RabbitPublisher,
 ) {
 	// Start listening for notifications in a separate goroutine
 	notificationChan := WatchChangesInStorage(ctx, mc, input)
@@ -77,17 +60,30 @@ func HandleStorageNotifications(
 					key = record.S3.Object.Key
 				}
 
-				info := BucketNotificationInfo{
+				content, err := pdf.ParsePDF(ctx, mc, input.BucketName, key)
+				if err != nil {
+					log.Fatalf("Error while parsing the: %s", key)
+					content = ""
+				}
+
+
+				info := models.BucketNotificationInfo{
 					EventName:  record.EventName,
 					BucketName: record.S3.Bucket.Name,
 					ObjectKey:  key,
 					ObjectSize: record.S3.Object.Size,
 					ETag:       record.S3.Object.ETag,
 					EventTime:  record.EventTime,
+					Content: content,
 				}
 
-				if handler != nil {
-					handler(info)
+				log.Printf("ready to publish: %s, from: %s", info.ObjectKey, info.BucketName)
+
+				if err := publisher.PublishNotification(ctx, info); err != nil {
+					log.Printf("Failed to push event for %s to RabbitMQ: %v", info.ObjectKey, err)
+				} else {
+					log.Printf("Successfully published [%s] event for file '%s' to queue '%s'",
+						info.EventName, info.ObjectKey, publisher.Queue.Name)
 				}
 			}
 
@@ -95,24 +91,4 @@ func HandleStorageNotifications(
 	}
 }
 
-// use -
-/*
-func main() {
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
 
-    input := &storage.BucketNotificationInput{
-        BucketName: "documents",
-        Events:     []string{"s3:ObjectCreated:*", "s3:ObjectRemoved:*"},
-    }
-
-    // Process each notification stream event dynamically
-    go storage.HandleStorageNotifications(ctx, minioClient, input, func(info storage.BucketNotificationInfo) {
-        log.Printf("Received Event [%s] for File: %s (%d bytes)", info.EventName, info.ObjectKey, info.ObjectSize)
-    })
-
-    // Keep service running...
-    select {}
-}
-
-*/

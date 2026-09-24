@@ -20,6 +20,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("MAX_UPLOAD_BYTES", "")
 	t.Setenv("ENV", "")
 	t.Setenv("RABBITMQ_URL", "")
+	t.Setenv("QUEUE_NAME", "")
 
 	cfg := LoadConfig()
 
@@ -87,6 +88,13 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		)
 	}
 
+	if cfg.QueueName != "invoice_audit_queue" {
+		t.Errorf(
+			"expected default QueueName invoice_audit_queue, got %s",
+			cfg.QueueName,
+		)
+	}
+
 }
 
 func TestLoadConfig_CustomEnvVars(t *testing.T) {
@@ -101,6 +109,7 @@ func TestLoadConfig_CustomEnvVars(t *testing.T) {
 		"DATABASE_URL",
 		"postgres://user:password@db:5432/testdb?sslmode=disable",
 	)
+	t.Setenv("QUEUE_NAME", "invoice_audit_queue")
 
 	cfg := LoadConfig()
 
@@ -162,6 +171,13 @@ func TestLoadConfig_CustomEnvVars(t *testing.T) {
 		t.Errorf(
 			"expected RabbitMQURL amqp://guest:guest@localhost:5672/, got %s",
 			cfg.RabbitMQURL,
+		)
+	}
+
+	if cfg.QueueName != "invoice_audit_queue" {
+		t.Errorf(
+			"expected QUEUE_NAME QueueName, got %s",
+			cfg.QueueName,
 		)
 	}
 

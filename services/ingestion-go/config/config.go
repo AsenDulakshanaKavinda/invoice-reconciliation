@@ -22,6 +22,10 @@ type Config struct {
 	DatabaseURL string
 
 	RabbitMQURL string
+	QueueName string
+	ExchangeName string
+	ExchangeType string
+	RoutingKey string
 
 	Environment string
 }
@@ -44,6 +48,11 @@ func LoadConfig() Config {
 
 
 		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		QueueName: getenv("QUEUE_NAME", "invoice_audit_queue"),
+		ExchangeName: getenv("EXCHANGE_NAME", "pdf-exchange"),
+		ExchangeType: getenv("EXCHANGE_TYPE", "direct"),
+		RoutingKey: getenv("ROUTING_KEY", "notification.bucket"),
+
 
 		Environment: getenv("ENV", "dev"),
 	}

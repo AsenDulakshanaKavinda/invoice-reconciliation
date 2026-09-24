@@ -1,28 +1,29 @@
-package rabbitmq
+package publisher
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	config "ingestion-go/config"
-	"ingestion-go/pkg/storage"
+	"ingestion-go/pkg/models"
 	"time"
-
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // RabbitPublisher handles RabbitMQ publishing operations.
 type RabbitPublisher struct {
-	conn  *amqp.Connection
-	ch    *amqp.Channel
-	queue amqp.Queue
+	Conn  *amqp.Connection
+	Ch    *amqp.Channel
+	Queue amqp.Queue
+	ExchangeName string
+	RoutingKey string
 }
 
 // NewRabbitPublisher creates a new RabbitPublisher instance, establishing a connection to RabbitMQ and declaring the specified queue.
-func NewRabbitPublisher(cfg config.Config, amqpURL, queueName string) (*RabbitPublisher, error) {
+func NewRabbitPublisher(cfg config.Config) (*RabbitPublisher, error) {
 
 	// create a new connection to RabbitMQ
-	conn, err := amqp.Dial(amqpURL)
+	conn, err := amqp.Dial(cfg.RabbitMQURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
@@ -34,9 +35,27 @@ func NewRabbitPublisher(cfg config.Config, amqpURL, queueName string) (*RabbitPu
 		return nil, fmt.Errorf("failed to open RabbitMQ channel: %w", err)
 	}
 
+	// create a exchange for route messages
+	exchangeName := cfg.ExchangeName
+	exchangeType := cfg.ExchangeType
+	err = ch.ExchangeDeclare(
+		exchangeName, // name
+		exchangeType, // type
+		true,         // durable
+		false,        // auto-deleted
+		false,        // internal
+		false,        // no-wait
+		nil,          // arguments
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
 	// Declare a durable queue to prevent message loss on RabbitMQ restarts
 	q, err := ch.QueueDeclare(
-		queueName, // name
+		cfg.QueueName, // name
 		true,      // durable
 		false,     // delete when unused
 		false,     // exclusive
@@ -49,15 +68,37 @@ func NewRabbitPublisher(cfg config.Config, amqpURL, queueName string) (*RabbitPu
 		return nil, fmt.Errorf("failed to declare RabbitMQ queue: %w", err)
 	}
 
+	// bind queue to exchange
+	routingKey := cfg.RoutingKey
+
+	err = ch.QueueBind(
+		q.Name, 
+		routingKey,
+		exchangeName,
+		false, // no wait
+		nil, // arguments
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind queue to exchange: %w", err)
+	}
+
+
+
 	return &RabbitPublisher{
-		conn:  conn,
-		ch:    ch,
-		queue: q,
+		Conn:  conn,
+		Ch:    ch,
+		Queue: q,
+		ExchangeName: exchangeName,
+		RoutingKey: routingKey,
 	}, nil
 }
 
+
+
 // PublishNotification serializes and sends a single notification event to RabbitMQ.
-func (r *RabbitPublisher) PublishNotification(ctx context.Context, info storage.BucketNotificationInfo) error {
+func (r *RabbitPublisher) PublishNotification(ctx context.Context, info models.BucketNotificationInfo) error {
 
 	// Serialize the notification info to JSON
 	body, err := json.Marshal(info)
@@ -70,12 +111,12 @@ func (r *RabbitPublisher) PublishNotification(ctx context.Context, info storage.
 	defer cancel()
 
 	// Publish the message to the RabbitMQ queue
-	err = r.ch.PublishWithContext(
+	err = r.Ch.PublishWithContext(
 		pubCtx,
-		"",           // exchange (empty string uses default exchange)
-		r.queue.Name, // routing key (matches queue name for default exchange)
-		false,        // mandatory
-		false,        // immediate
+		r.ExchangeName, // custom exchange name
+		r.RoutingKey,   // routing key
+		false,          // mandatory
+		false,          // immediate
 		amqp.Publishing{
 			DeliveryMode: amqp.Persistent, // Mark message as persistent on disk
 			ContentType:  "application/json",
@@ -92,10 +133,10 @@ func (r *RabbitPublisher) PublishNotification(ctx context.Context, info storage.
 
 // Close gracefully closes the RabbitMQ channel and connection.
 func (r *RabbitPublisher) Close() {
-	if r.ch != nil {
-		r.ch.Close()
+	if r.Ch != nil {
+		r.Ch.Close()
 	}
-	if r.conn != nil {
-		r.conn.Close()
+	if r.Conn != nil {
+		r.Conn.Close()
 	}
 }
