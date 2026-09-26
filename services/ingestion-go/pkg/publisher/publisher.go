@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	amqp "github.com/rabbitmq/amqp091-go"
 	config "ingestion-go/config"
 	"ingestion-go/pkg/models"
 	"time"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // RabbitPublisher handles RabbitMQ publishing operations.
 type RabbitPublisher struct {
-	Conn  *amqp.Connection
-	Ch    *amqp.Channel
-	Queue amqp.Queue
+	Conn         *amqp.Connection
+	Ch           *amqp.Channel
+	Queue        amqp.Queue
 	ExchangeName string
-	RoutingKey string
+	RoutingKey   string
 }
 
 // NewRabbitPublisher creates a new RabbitPublisher instance, establishing a connection to RabbitMQ and declaring the specified queue.
@@ -56,11 +56,11 @@ func NewRabbitPublisher(cfg config.Config) (*RabbitPublisher, error) {
 	// Declare a durable queue to prevent message loss on RabbitMQ restarts
 	q, err := ch.QueueDeclare(
 		cfg.QueueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
+		true,          // durable
+		false,         // delete when unused
+		false,         // exclusive
+		false,         // no-wait
+		nil,           // arguments
 	)
 	if err != nil {
 		ch.Close()
@@ -72,11 +72,11 @@ func NewRabbitPublisher(cfg config.Config) (*RabbitPublisher, error) {
 	routingKey := cfg.RoutingKey
 
 	err = ch.QueueBind(
-		q.Name, 
+		q.Name,
 		routingKey,
 		exchangeName,
 		false, // no wait
-		nil, // arguments
+		nil,   // arguments
 	)
 	if err != nil {
 		ch.Close()
@@ -84,18 +84,14 @@ func NewRabbitPublisher(cfg config.Config) (*RabbitPublisher, error) {
 		return nil, fmt.Errorf("failed to bind queue to exchange: %w", err)
 	}
 
-
-
 	return &RabbitPublisher{
-		Conn:  conn,
-		Ch:    ch,
-		Queue: q,
+		Conn:         conn,
+		Ch:           ch,
+		Queue:        q,
 		ExchangeName: exchangeName,
-		RoutingKey: routingKey,
+		RoutingKey:   routingKey,
 	}, nil
 }
-
-
 
 // PublishNotification serializes and sends a single notification event to RabbitMQ.
 func (r *RabbitPublisher) PublishNotification(ctx context.Context, info models.BucketNotificationInfo) error {
